@@ -1,6 +1,6 @@
 '''
     ESSArch - ESSArch is an Electronic Archive system
-    Copyright (C) 2010-2013  ES Solutions AB
+    Copyright (C) 2010-2016  ES Solutions AB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -19,24 +19,23 @@
     Web - http://www.essolutions.se
     Email - essarch@essolutions.se
 '''
-__majorversion__ = "2.5"
-__revision__ = "$Revision$"
-__date__ = "$Date$"
-__author__ = "$Author$"
-import re
-__version__ = '%s.%s' % (__majorversion__,re.sub('[\D]', '',__revision__))
+try:
+    import ESSArch_EPP as epp
+except ImportError:
+    __version__ = '2'
+else:
+    __version__ = epp.__version__ 
+
 from django.db import models
 from django import forms
 from django.utils.safestring import mark_safe
-from django.forms.util import flatatt
+from django.forms.utils import flatatt
 from django.core.urlresolvers import reverse
 from django.conf import settings
-from configuration.models import ESSArchPolicy
-#import django_tables2 as tables
-#from django_tables2.utils import A
-from djcelery.models import TaskMeta
+from django.utils.translation import ugettext_lazy as _
 from picklefield.fields import PickledObjectField
 from essarch.fields import BigAutoField
+import uuid
 
 ###########################################################################
 #
@@ -155,7 +154,7 @@ StatusProcess_CHOICES = (
     (30, 'Create AIP package'),
     (31, 'AIP create failed'),
     (39, 'AIP created OK'),
-    (40, 'Create packge checksum'),
+    (40, 'Create package checksum'),
     (49, 'AIP checksum created OK'),
     (50, 'AIP validate'),
     (51, 'AIP validate failed'),
@@ -168,6 +167,7 @@ StatusProcess_CHOICES = (
     (1002, 'No empty media available'),
     (1003, 'Problem to mount media'),
     (1004, 'Failed to verify tape after full write'),
+    (1500, 'Remote AIP'),
     (1999, 'Write AIP OK'),
     (2000, 'Try to remove temp AIP object'),
     (2001, 'Failed to remove temp AIP object'),
@@ -229,56 +229,16 @@ RobotReqType_CHOICES = (
     (1, 'Robot inventory'),
 )
 
-#RobotReqStatus_CHOICES = (
-#    ('0', 'Pending'),
-#    ('5', 'Progress'),
-#    ('20', 'Success'),
-#    ('100', 'FAIL'),
-#    ('pending', 'Mount/Unmount Pending'),
-#    ('mounting', 'Mount/Unmount Progress'),
-#)
-
-MediumType_CHOICES = (
-    (200, 'DISK'),
-    (301, 'IBM-LTO1'),
-    (302, 'IBM-LTO2'),
-    (303, 'IBM-LTO3'),
-    (304, 'IBM-LTO4'),
-    (305, 'IBM-LTO5'),
-)
-
-MediumFormat_CHOICES = (
-    (102, '102 (Media label)'),
-    (103, '103 (AIC support)'),
-)
-
-MediumStatus_CHOICES = (
-    (0, 'Inactive'),
-    (20, 'Write'),
-    (30, 'Full'),
-    (100, 'FAIL'),
-)
-
-MediumLocationStatus_CHOICES = (
-    (10, '10'),
-    (20, '20'),
-    (30, '30'),
-    (40, '40'),
-    (50, 'Robot'),
-)
-
-MediumBlockSize_CHOICES = (
-    (128, '64K'),
-    (256, '128K'),
-    (512, '256K'),
-    (1024, '512K'),
-    (2048, '1024K'),
-)
-
 eventOutcome_CHOICES = (
     (0, 'OK'),
     (1, 'Failed'),
 )
+
+class ObjectMetadata(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    label = models.CharField(max_length=255, blank=True)
+    startdate = models.DateTimeField(null=True)
+    enddate = models.DateTimeField(null=True)
 
 ###########################################################################
 #
@@ -289,43 +249,53 @@ class ArchiveObject(models.Model):
     id = BigAutoField(primary_key=True)
     ObjectUUID = models.CharField(max_length=36, unique=True)
     #PolicyId = models.IntegerField(null=True)
-    PolicyId = models.ForeignKey(ESSArchPolicy, db_column='PolicyId', to_field='PolicyID', default=0)
+    #PolicyId = models.ForeignKey(ESSArchPolicy, db_column='PolicyId', to_field='PolicyID', default=0)
+    PolicyId = models.ForeignKey('configuration.ArchivePolicy', db_column='PolicyId', to_field='PolicyID', blank=True, null=True)
     ObjectIdentifierValue = models.CharField(max_length=255, unique=True)
-    ObjectPackageName = models.CharField(max_length=255)
+    ObjectPackageName = models.CharField(max_length=255, blank=True)
     ObjectSize = models.BigIntegerField(null=True)
     ObjectNumItems = models.IntegerField(null=True)
     ObjectMessageDigestAlgorithm = models.IntegerField(null=True)
-    ObjectMessageDigest = models.CharField(max_length=128)
-    ObjectPath = models.CharField(max_length=255)
+    ObjectMessageDigest = models.CharField(max_length=128, blank=True)
+    ObjectPath = models.CharField(max_length=255, blank=True)
     ObjectActive = models.IntegerField(null=True)
-    MetaObjectIdentifier = models.CharField(max_length=255)
+    MetaObjectIdentifier = models.CharField(max_length=255, blank=True)
     MetaObjectSize = models.BigIntegerField(null=True)
     CMetaMessageDigestAlgorithm = models.IntegerField(null=True)
-    CMetaMessageDigest = models.CharField(max_length=128)
+    CMetaMessageDigest = models.CharField(max_length=128, blank=True)
     PMetaMessageDigestAlgorithm = models.IntegerField(null=True)
-    PMetaMessageDigest = models.CharField(max_length=128)
+    PMetaMessageDigest = models.CharField(max_length=128, blank=True)
     DataObjectSize = models.BigIntegerField(null=True)
     DataObjectNumItems = models.IntegerField(null=True)
     Status = models.IntegerField(null=True)
     StatusActivity = models.IntegerField(null=True, choices=StatusActivity_CHOICES)
     StatusProcess = models.IntegerField(null=True, choices=StatusProcess_CHOICES)
     LastEventDate = models.DateTimeField(null=True)
-    linkingAgentIdentifierValue = models.CharField(max_length=45)
+    linkingAgentIdentifierValue = models.CharField(max_length=255, blank=True)
     CreateDate = models.DateTimeField(null=True)
-    CreateAgentIdentifierValue = models.CharField(max_length=45)
+    CreateAgentIdentifierValue = models.CharField(max_length=255, blank=True)
     EntryDate = models.DateTimeField(null=True)
-    EntryAgentIdentifierValue = models.CharField(max_length=45)
+    EntryAgentIdentifierValue = models.CharField(max_length=255, blank=True)
     OAISPackageType = models.IntegerField(null=True,choices=PackageType_CHOICES)
     preservationLevelValue = models.IntegerField(null=True)
-    DELIVERYTYPE = models.CharField(max_length=255)
+    DELIVERYTYPE = models.CharField(max_length=255, blank=True)
     INFORMATIONCLASS = models.IntegerField(null=True)
     Generation = models.IntegerField(null=True)
     LocalDBdatetime = models.DateTimeField(null=True)
     ExtDBdatetime = models.DateTimeField(null=True)
+    archiveobjects = models.ManyToManyField('self', through='ArchiveObjectRel', through_fields=('AIC_UUID', 'UUID'), related_name='aic_set', symmetrical=False)
+    ObjectMetadata = models.ForeignKey('essarch.ObjectMetadata', blank=True, null=True)
     class Meta:
         db_table = 'IngestObject'
+    def __unicode__(self):
+        return self.ObjectIdentifierValue
     def get_absolute_url(self):
         return reverse('ingest_listobj')
+    def check_db_sync(self):
+        if self.LocalDBdatetime is not None and self.ExtDBdatetime is not None:
+            if (self.LocalDBdatetime-self.ExtDBdatetime).total_seconds() == 0: return True
+            else: return False
+        else: return False
     def get_ip_list(self,StatusProcess=None,StatusProcess__lt=None,StatusProcess__in=None,StatusActivity__in=None):
         ip_list = []
         # Try to get an list of IP objects related to AIC object "IP_Object"
@@ -388,8 +358,8 @@ class ArchiveObjectData(models.Model):
     #id = models.AutoField(big=True,primary_key=True)
     id = BigAutoField(primary_key=True)
     UUID = models.ForeignKey(ArchiveObject, db_column='UUID', to_field='ObjectUUID')
-    creator = models.CharField(max_length=255)
-    label = models.CharField(max_length=255)
+    creator = models.CharField(max_length=255, blank=True)
+    label = models.CharField(max_length=255, blank=True)
     startdate = models.DateTimeField(null=True)
     enddate = models.DateTimeField(null=True)
     class Meta:
@@ -399,22 +369,27 @@ class ArchiveObjectMetadata(models.Model):
     #id = models.AutoField(big=True,primary_key=True)
     id = BigAutoField(primary_key=True)
     ObjectUUID = models.ForeignKey(ArchiveObject, db_column='ObjectUUID', to_field='ObjectUUID')
-    ObjectIdentifierValue = models.CharField(max_length=255)
+    ObjectIdentifierValue = models.CharField(max_length=255, blank=True)
     ObjectMetadataType = models.IntegerField(null=True)
     ObjectMetadataServer = models.IntegerField(null=True)
-    ObjectMetadataURL = models.CharField(max_length=255)
-    ObjectMetadataBLOB = models.TextField()
-    linkingAgentIdentifierValue = models.CharField(max_length=45)
+    ObjectMetadataURL = models.CharField(max_length=255, blank=True)
+    ObjectMetadataBLOB = models.TextField(blank=True)
+    linkingAgentIdentifierValue = models.CharField(max_length=45, blank=True)
     LocalDBdatetime = models.DateTimeField(null=True)
     ExtDBdatetime = models.DateTimeField(null=True)
     class Meta:
         db_table = 'IngestObjectMetadata'
+    def check_db_sync(self):
+        if self.LocalDBdatetime is not None and self.ExtDBdatetime is not None:
+            if (self.LocalDBdatetime-self.ExtDBdatetime).total_seconds() == 0: return True
+            else: return False
+        else: return False
 
 class ArchiveObjectRel(models.Model):
     #id = models.AutoField(big=True,primary_key=True)
     id = BigAutoField(primary_key=True)
-    AIC_UUID = models.ForeignKey(ArchiveObject, db_column='AIC_UUID', related_name='relaic_set', to_field='ObjectUUID')
-    UUID = models.ForeignKey(ArchiveObject, db_column='UUID', related_name='reluuid_set', to_field='ObjectUUID')
+    AIC_UUID = models.ForeignKey('ArchiveObject', db_column='AIC_UUID', related_name='relaic_set', to_field='ObjectUUID')
+    UUID = models.ForeignKey('ArchiveObject', db_column='UUID', related_name='reluuid_set', to_field='ObjectUUID')
     class Meta:
         db_table = 'Object_rel'
 
@@ -437,7 +412,7 @@ class eventIdentifier(models.Model):
     eventApplication = models.CharField(max_length=50)
     eventVersion = models.CharField(max_length=45)
     eventOutcome = models.IntegerField(null=True)
-    eventOutcomeDetailNote = models.CharField(max_length=255)
+    eventOutcomeDetailNote = models.CharField(max_length=1024)
     linkingAgentIdentifierValue = models.CharField(max_length=45)
     linkingObjectIdentifierValue = models.CharField(max_length=255)
     class Meta:
@@ -453,6 +428,48 @@ class eventType_codes(models.Model):
     externalDB = models.IntegerField(null=True)
     class Meta:
         db_table = 'eventType_codes'
+
+class ProcessStep(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=256, blank=True)
+    type = models.IntegerField(null=True, choices=StatusProcess_CHOICES)
+    user = models.CharField(max_length=45)
+    result = PickledObjectField(blank=True)
+    status = models.IntegerField(blank=True, default=0, choices=ReqStatus_CHOICES)
+    posted = models.DateTimeField(auto_now_add=True)
+    progress = models.IntegerField(blank=True, default=0)
+    archiveobject = models.ForeignKey('ArchiveObject', to_field='ObjectUUID', blank=True, null=True)
+    hidden = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = u'ProcessStep'
+    def __unicode__(self):
+        return '%s - %s - archiveobject:%s' % (self.name, self.id, self.archiveobject.ObjectUUID)
+
+from celery import states as celery_states
+TASK_STATE_CHOICES = zip(celery_states.ALL_STATES, celery_states.ALL_STATES)
+
+class ProcessTask(models.Model):
+    """Task result/status."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=256, blank=True)
+    task_id = models.CharField(_('task id'), max_length=255, unique=True)
+    status = models.CharField(
+        _('state'),
+        max_length=50, default=celery_states.PENDING, choices=TASK_STATE_CHOICES,
+    )
+    result = PickledObjectField(null=True, default=None, editable=False)
+    date_done = models.DateTimeField(_('done at'), auto_now=True)
+    traceback = models.TextField(_('traceback'), blank=True, null=True)
+    hidden = models.BooleanField(editable=False, default=False, db_index=True)
+    meta = PickledObjectField(null=True, default=None, editable=False)
+    progress = models.IntegerField(blank=True, default=0)
+    processstep = models.ForeignKey('ProcessStep', blank=True, null=True)
+
+    class Meta:
+        db_table = 'ProcessTask'
+    def __unicode__(self):
+        return '%s - %s' % (self.name, self.id)
 
 class IOqueue(models.Model):
     #id = models.AutoField(big=True,primary_key=True)
@@ -477,6 +494,7 @@ class IOqueue(models.Model):
     class Meta:
         db_table = 'IOqueue'
 
+"""
 class ESSReg001(models.Model):
     #id = models.AutoField(big=True,primary_key=True)
     id = BigAutoField(primary_key=True)
@@ -523,6 +541,7 @@ class ESSReg001(models.Model):
     s019 = models.CharField(max_length=255)
     class Meta:
         db_table = 'ESSReg001'
+"""
 
 ###########################################################################
 #
@@ -537,6 +556,7 @@ class ControlAreaQueue(models.Model):
     ObjectIdentifierValue = models.CharField(max_length=255, blank=True)
     Status = models.IntegerField(null=True, blank=True, default=0, choices=ReqStatus_CHOICES)
     posted = models.DateTimeField(auto_now_add=True)
+    taskid = models.CharField(max_length=255,blank=True,null=True)
     class Meta:
         db_table = 'ReqControlAreaQueue'
     
@@ -548,7 +568,7 @@ class ControlAreaForm(forms.ModelForm):
     user = forms.CharField(label='User', widget = PlainText())
     class Meta:
         model=ControlAreaQueue   
-        exclude=('password',)
+        exclude=('password', 'taskid',)
 
 class ControlAreaForm2(ControlAreaForm):
     ReqType = forms.ChoiceField(label='ReqType',choices=ControlAreaReqType_CHOICES, widget = PlainText())
@@ -588,7 +608,8 @@ class ControlAreaForm_reception(ControlAreaForm2):
 #
 # Access models and forms
 #
-class AccessQueue(models.Model):     
+class AccessQueue(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     ReqUUID = models.CharField(max_length=36)
     ReqType = models.IntegerField(null=True, choices=AccessReqType_CHOICES)
     ReqPurpose = models.CharField(max_length=255)
@@ -679,6 +700,9 @@ class IngestQueueFormUpdate(IngestQueueForm):
 #
 # Administration models and forms
 #
+#"""
+from Storage.models import MediumType_CHOICES, MediumFormat_CHOICES, MediumLocationStatus_CHOICES, MediumStatus_CHOICES
+
 class storageMedium(models.Model):
     #id = models.AutoField(big=True,primary_key=True)
     id = BigAutoField(primary_key=True)
@@ -738,11 +762,12 @@ class storage(models.Model):
         permissions = (
             ("list_storage", "Can list storage"),
         )
+#"""
         
 class robot(models.Model):
     slot_id = models.IntegerField(null=True)
     drive_id = models.IntegerField(null=True)
-    status = models.CharField(max_length=10)
+    status = models.CharField(max_length=45)
     t_id = models.CharField(max_length=6)
     class Meta:
         db_table = 'robot'
@@ -850,6 +875,7 @@ class MigrationQueue(models.Model):
     Status = models.IntegerField(null=True, blank=True, default=0, choices=ReqStatus_CHOICES)
     Path = models.CharField(max_length=255)
     CopyPath = models.CharField(max_length=255,blank=True)
+    CopyOnlyFlag =  models.BooleanField(default = False)
     task_id = models.CharField(max_length=36,blank=True)
     #task_id = models.ForeignKey(TaskMeta, db_column='task_id', to_field='task_id', null=True, blank=True)
     posted = models.DateTimeField(auto_now_add=True)
@@ -870,6 +896,7 @@ class MigrationQueueForm(forms.ModelForm):
     #ReqType = forms.ChoiceField(label='ReqType', choices=ReqType_CHOICES , widget = PlainText())
     ObjectIdentifierValue = forms.CharField(widget=forms.Textarea())
     TargetMediumID = forms.CharField(widget=forms.Textarea())
+    CopyOnlyFlag = forms.BooleanField(widget=forms.CheckboxInput(), required=False,initial=False)
     Status = forms.IntegerField(widget = forms.HiddenInput())
     user = forms.CharField(label='User', widget = PlainText())
 #    def clean_Path(self):

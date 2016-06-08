@@ -26,6 +26,10 @@ __date__ = "$Date$"
 __author__ = "$Author$"
 import re
 __version__ = '%s.%s' % (__majorversion__,re.sub('[\D]', '',__revision__))
+
+import django
+django.setup()
+
 import logging, logging.handlers, sys, ESSDB, time
 from multiprocessing import Process
 from django.contrib.auth.models import User
@@ -113,6 +117,7 @@ class DjangoFtpAuthorizer:
             raise
 
     def validate_authentication(self, username, password, handler):
+        db.close_old_connections()
         user = authenticate(username=username, password=password)
         if user is not None:
             if user.is_active:
@@ -155,7 +160,6 @@ def serve_ftpd(ftpd,ProcName):
 # Dep:
 # Table: ESSProc with Name: AIPPurge, LogFile: /log/xxx.log, Time: 5, Status: 0/1, Run: 0/1
 # Table: ESSConfig with Name: IngestTable Value: IngestObject
-# Table: ESSConfig with Name: PolicyTable Value: archpolicy
 # Arg: -d = Debug on
 #######################################################################################################
 if __name__ == '__main__':

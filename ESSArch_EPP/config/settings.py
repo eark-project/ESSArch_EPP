@@ -94,6 +94,8 @@ TIME_ZONE = 'Europe/Stockholm'
 #LANGUAGE_CODE = 'nn'    #Norwegian Nynorsk
 #LANGUAGE_CODE = 'nb'    #Norwegian Bokmal
 
+SESSION_COOKIE_NAME = 'epp'
+
 SITE_ID = 1
 
 # If you set this to False, Django will make some optimizations so as not
@@ -177,6 +179,17 @@ TEMPLATE_CONTEXT_PROCESSORS = (
     "django.core.context_processors.request",
 )
 
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework.authentication.BasicAuthentication',
+        'rest_framework.authentication.SessionAuthentication',
+    ),
+    'DEFAULT_FILTER_BACKENDS': (
+        #'rest_framework_filters.backends.DjangoFilterBackend',
+        'rest_framework.filters.DjangoFilterBackend',
+    ),
+}
+
 ROOT_URLCONF = 'config.urls'
 
 # Python dotted path to the WSGI application used by Django's runserver.
@@ -197,7 +210,7 @@ INSTALLED_APPS = (
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'django.contrib.admin',
-    'south',
+    #'south',
     'djcelery',
     'djangojs',
     'eztables',
@@ -211,6 +224,12 @@ INSTALLED_APPS = (
     'reports',
     'logfileviewer',
     'monitoring',
+    'nested_inline',
+    'Storage',
+    'StorageMethodDisk',
+    'StorageMethodTape',
+    'chunked_upload',
+    'api',
 )
 
 import djcelery
@@ -219,28 +238,31 @@ djcelery.setup_loader()
 BROKER_URL = 'amqp://guest:guest@localhost:5672/'
 CELERY_RESULT_BACKEND='djcelery.backends.database:DatabaseBackend'
 CELERYBEAT_SCHEDULER='djcelery.schedulers.DatabaseScheduler'
+CELERY_DEFAULT_QUEUE = 'default'
+CELERY_TASK_RESULT_EXPIRES = 864000 # clean older than 10 days in celery_taskmeta
 
 from celery.schedules import crontab
 from datetime import timedelta
 
-process_list=["IOEngine.pyc", "FTPServer.pyc", "AccessEngine.pyc","ESSlogging.pyc", "db_sync_ais.pyc", "TLD.pyc", "AIPPurge.pyc", 
-                    "AIPWriter.pyc", "SIPRemove.pyc", "AIPValidate.pyc", "AIPChecksum.pyc", "AIPCreator.pyc","SIPValidateFormat.pyc",
-                    "SIPValidateApproval.pyc","SIPValidateAIS.pyc","SIPReceiver.pyc"]
+process_list=["FTPServer.py", "AccessEngine.py","ESSlogging.py", "db_sync_ais.py", "TLD.py", "AIPPurge.py", 
+                    "AIPWriter.py", "SIPRemove.py", "AIPValidate.py", "AIPChecksum.py", "AIPCreator.py","SIPValidateFormat.py",
+                    "SIPValidateApproval.py","SIPValidateAIS.py","SIPReceiver.py"]
 WORKERS_ROOT = '/ESSArch/pd/python/lib/python2.7/site-packages/ESSArch_EPP/workers'
 for i,p in enumerate(process_list):
     process_list[i]=os.path.join(WORKERS_ROOT,p)
+PROCESS_LIST = process_list
 
 CELERYBEAT_SCHEDULE = {
-    "CheckProcesses-every-30-seconds": {
+    "CheckProcesses-every-120-seconds": {
         "task": "monitoring.tasks.CheckProcessTask",
-        "schedule": timedelta(seconds=30),
+        "schedule": timedelta(seconds=120),
         "kwargs": {
                 'process_list':process_list,
         }
     },
-    "CheckProcFiles-every-60-seconds": {
+    "CheckProcFiles-every-300-seconds": {
         "task": "monitoring.tasks.CheckProcFilesTask",
-        "schedule": timedelta(seconds=60),
+        "schedule": timedelta(seconds=300),
         "kwargs": {
                 'proc_log_path':"/ESSArch/log/proc",
         }
@@ -299,7 +321,7 @@ LOGGING = {
         'log_file_db': {
             'level': 'DEBUG',
             #'filters': ['require_debug_false'],
-            'class' : 'logging.handlers.RotatingFileHandler',
+            'class' : 'essarch.custom_handlers.GroupWriteRotatingFileHandler',
             'formatter': 'verbose',
             'filename': '/ESSArch/log/ESSArch_db.log',
             'maxBytes': 1024*1024*5, # 5MB
@@ -312,6 +334,15 @@ LOGGING = {
             'formatter': 'verbose',
             'filename': '/ESSArch/log/ESSArch.log',
             'maxBytes': 1024*1024*5, # 5MB
+            'backupCount': 5,
+        },
+        'log_file_auth': {
+            'level': 'DEBUG',
+            #'filters': ['require_debug_false'],
+            'class' : 'logging.handlers.RotatingFileHandler',
+            'formatter': 'verbose',
+            'filename': '/ESSArch/log/auth.log',
+            'maxBytes': 1024*1024*100, # 100MB
             'backupCount': 5,
         },
         'log_file_controlarea': {
@@ -364,6 +395,42 @@ LOGGING = {
             # Reference to handler in log.py below
             'class': 'monitoring.log.DbLogHandler',
         },
+        'log_file_Storage': {
+            'level': 'DEBUG',
+            #'filters': ['require_debug_false'],
+            'class' : 'logging.handlers.RotatingFileHandler',
+            'formatter': 'verbose',
+            'filename': '/ESSArch/log/Storage.log',
+            'maxBytes': 1024*1024*5, # 5MB
+            'backupCount': 1000,
+        },
+        'log_file_StorageMethodDisk': {
+            'level': 'DEBUG',
+            #'filters': ['require_debug_false'],
+            'class' : 'logging.handlers.RotatingFileHandler',
+            'formatter': 'verbose',
+            'filename': '/ESSArch/log/StorageMethodDisk.log',
+            'maxBytes': 1024*1024*5, # 5MB
+            'backupCount': 1000,
+        },
+        'log_file_StorageMethodTape': {
+            'level': 'DEBUG',
+            #'filters': ['require_debug_false'],
+            'class' : 'logging.handlers.RotatingFileHandler',
+            'formatter': 'verbose',
+            'filename': '/ESSArch/log/StorageMethodTape.log',
+            'maxBytes': 1024*1024*5, # 5MB
+            'backupCount': 1000,
+        },
+        'log_file_install': {
+            'level': 'DEBUG',
+            #'filters': ['require_debug_false'],
+            'class' : 'logging.handlers.RotatingFileHandler',
+            'formatter': 'verbose',
+            'filename': '/ESSArch/log/install.log',
+            'maxBytes': 1024*1024*5, # 5MB
+            'backupCount': 1000,
+        },
     },
     'loggers': {
         'django': {
@@ -384,6 +451,11 @@ LOGGING = {
         'essarch': {
             'level': 'INFO',
             'handlers': ['null'],
+            'propagate': True,
+        },
+        'essarch.auth': {
+            'level': 'INFO',
+            'handlers': ['log_file_auth'],
             'propagate': True,
         },
         'essarch.controlarea': {
@@ -415,7 +487,27 @@ LOGGING = {
             'level': 'ERROR',
             'handlers': ['dblog'],
             'propagate': True,
-        },                
+        },
+        'Storage': {
+            'level': 'INFO',
+            'handlers': ['log_file_Storage'],
+            'propagate': True,
+        },
+        'StorageMethodDisk': {
+            'level': 'INFO',
+            'handlers': ['log_file_StorageMethodDisk'],
+            'propagate': True,
+        },
+        'StorageMethodTape': {
+            'level': 'INFO',
+            'handlers': ['log_file_StorageMethodTape'],
+            'propagate': True,
+        },
+        'install': {
+            'level': 'INFO',
+            'handlers': ['log_file_install'],
+            'propagate': True,
+        },
     },
 }
 

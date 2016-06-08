@@ -54,9 +54,25 @@
 </div>
 
 <br/>
-<a href="{% url 'access_update' access.id %}">Edit access request</a> | <a href="{% url 'access_delete' access.id %}">Delete access request</a>
+<a href="{% url 'access_update' access.id.hex %}">Edit access request</a> | <a href="{% url 'access_delete' access.id.hex %}">Delete access request</a>
 
 </div>    
     
     
+{% endblock %}
+
+{% block app-extra-script %}
+<script>
+
+//Reload script
+window.onload = setupRefresh;
+
+function setupRefresh() {
+  setTimeout("refreshPage();", 30000);
+}
+function refreshPage() {
+   window.location = location.href;
+}
+
+</script>
 {% endblock %}

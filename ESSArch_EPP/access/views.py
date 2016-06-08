@@ -27,26 +27,117 @@ import re
 __version__ = '%s.%s' % (__majorversion__,re.sub('[\D]', '',__revision__))
 from django.core.urlresolvers import reverse
 from django.core.urlresolvers import reverse_lazy
+from django.core.exceptions import ObjectDoesNotExist
 from django.shortcuts import get_object_or_404
 from django.db.models import Q
+from django.http import HttpResponseRedirect
 
-from essarch.models import AccessQueue, AccessQueueForm, AccessQueueFormUpdate, ArchiveObject, PackageType_CHOICES, StatusProcess_CHOICES, ReqStatus_CHOICES, AccessReqType_CHOICES
+from essarch.models import AccessQueue, AccessQueueForm, AccessQueueFormUpdate, ArchiveObject, ArchiveObjectData, ArchiveObjectRel, PackageType_CHOICES, StatusProcess_CHOICES, ReqStatus_CHOICES, AccessReqType_CHOICES
 from configuration.models import Path, DefaultValue, Parameter
 
 from django.views.generic.detail import DetailView
-from django.views.generic import ListView, TemplateView
+from django.views.generic import ListView, TemplateView,View
 from django.views.generic.edit import CreateView, UpdateView, DeleteView
 from django.utils import timezone
 
 from django.utils.decorators import method_decorator
 from django.contrib.auth.decorators import permission_required
 
-from essarch.libs import DatatablesView
+import json
+from django.core.serializers.json import DjangoJSONEncoder
+from django.http import HttpResponse, HttpResponseBadRequest
+
+from essarch.libs import DatatablesViewEss
+import datetime, time
 
 import uuid, os.path as op
 
+class AccessListInfoView(View):
+
+    @method_decorator(permission_required('essarch.list_accessqueue'))
+    def dispatch(self, *args, **kwargs):
+        return super(AccessListInfoView, self).dispatch( *args, **kwargs)
+
+    def get_access_listinfo(self, *args, **kwargs):
+        AICs_to_access = ArchiveObject.objects.filter(StatusProcess=3000) #filter(Q(StatusProcess=3000) | Q(OAISPackageType=1))
+        AIC_list = []
+        for obj in AICs_to_access:
+            AIC_IPs_query = ArchiveObjectRel.objects.filter(AIC_UUID=obj.ObjectUUID, UUID__StatusProcess=3000)
+            if len(AIC_IPs_query) > 0:
+                AIC = {}
+                AIC['AIC_UUID'] =(str(obj.ObjectUUID))
+                AIC_IPs = []
+                for ip in AIC_IPs_query:
+                    datainfo = ArchiveObjectData.objects.get(UUID=ip.UUID.ObjectUUID)
+                    AIC_IP = {}
+                    AIC_IP['id'] = ip.UUID.id
+                    AIC_IP['ObjectUUID'] = str(ip.UUID.ObjectUUID)
+                    AIC_IP['Archivist_organization'] = ip.UUID.EntryAgentIdentifierValue
+                    AIC['Archivist_organization'] = ip.UUID.EntryAgentIdentifierValue
+                    AIC_IP['Label'] = datainfo.label
+                    AIC['Label'] = datainfo.label
+                    AIC_IP['create_date'] = str(ip.UUID.EntryDate)[:10]
+                    AIC['create_date'] = str(ip.UUID.EntryDate)[:10]
+                    AIC_IP['Generation'] = ip.UUID.Generation
+                    AIC_IP['startdate'] = str(datainfo.startdate)[:10]
+                    AIC['startdate'] = str(datainfo.startdate)[:10]
+                    AIC_IP['enddate'] = str(datainfo.enddate)[:10]
+                    AIC['enddate'] = str(datainfo.enddate)[:10]
+                    AIC_IP['Process'] = ip.UUID.StatusProcess
+                    AIC_IP['Activity'] = ip.UUID.StatusActivity
+                    AIC_IPs.append(AIC_IP)
+                AIC['IPs'] = AIC_IPs
+                AIC_list.append(AIC)
+        return AIC_list
+
+    def json_response(self, request):
+
+        data = self.get_access_listinfo()
+        return HttpResponse(
+            json.dumps(data, cls=DjangoJSONEncoder)
+        )
+    def get(self, request, *args, **kwargs):
+        return self.json_response(request)
+
+'''
+class AccessListTemplateView(TemplateView):
+    template_name = 'access/access_list.html'
+
+    @method_decorator(permission_required('essarch.list_accessqueue'))
+    def dispatch(self, *args, **kwargs):
+        return super(AccessListTemplateView, self).dispatch( *args, **kwargs)
+
+    def get_context_data(self, **kwargs):
+
+        context = super(AccessListTemplateView, self).get_context_data(**kwargs)
+        context['label'] = 'ACCESS - List information packages'
+        return context
+'''
+
+class AICCheckView(View):
+
+    @method_decorator(permission_required('essarch.list_accessqueue'))
+    def dispatch(self, *args, **kwargs):
+        return super(AICCheckView, self).dispatch( *args, **kwargs)
+
+    def get_aic_check(self, *args, **kwargs):
+
+        AICcheck = ArchiveObjectRel.objects.exists()
+        #return AICcheck
+        return AICcheck
+
+    def json_response(self, request):
+
+        data = self.get_aic_check()
+        return HttpResponse(
+            json.dumps(data, cls=DjangoJSONEncoder)
+        )
+    def get(self, request, *args, **kwargs):
+        return self.json_response(request)
+
 class ArchObjectList(TemplateView):
-    template_name = 'access/archiveobject_list.html'
+    #template_name = 'access/archiveobject_list.html'
+    template_name = 'access/iplist.html'
 
     @method_decorator(permission_required('essarch.list_accessqueue'))
     def dispatch(self, *args, **kwargs):
@@ -60,7 +151,7 @@ class ArchObjectList(TemplateView):
         #context['MediumLocationStatus_CHOICES'] = dict(MediumLocationStatus_CHOICES)
         return context
 
-class ArchObjectDatatablesView(DatatablesView):
+class ArchObjectDatatablesView(DatatablesViewEss):
     model = ArchiveObject
     fields = (
         "id",
@@ -90,7 +181,7 @@ class ArchObjectDatatablesView(DatatablesView):
     def sort_col_9(self, direction):
         '''sort for col_10'''
         return ('%sid' % direction , '%sGeneration' % direction, '%sObjectUUID' % direction)
-
+'''
 class ArchObjectList2(ListView):
     """
     List ArchiveObject
@@ -154,6 +245,8 @@ class ArchObjectList2(ListView):
         context['PackageType_CHOICES'] = dict(PackageType_CHOICES)
         context['StatusProcess_CHOICES'] = dict(StatusProcess_CHOICES)
         return context
+'''
+
 
 class AccessList(ListView):
     """
@@ -162,7 +255,7 @@ class AccessList(ListView):
     model = AccessQueue
     template_name='access/list.html'
     context_object_name='req_list'
-    queryset=AccessQueue.objects.filter(Status__lt=20)   # Status<20
+    #queryset=AccessQueue.objects.filter(Status__lt=20)   # Status<20
 
     @method_decorator(permission_required('essarch.list_accessqueue'))
     def dispatch(self, *args, **kwargs):
@@ -231,17 +324,38 @@ class AccessCreate(CreateView):
             initial['ObjectIdentifierValue'] = self.kwargs['ip_uuid']
         return initial
     
+    def get_context_data(self, **kwargs):
+        context = super(AccessCreate, self).get_context_data(**kwargs)
+        media_str = ''
+        if 'ip_uuid' in self.kwargs:
+            ip=ArchiveObject.objects.get(ObjectIdentifierValue=self.kwargs['ip_uuid'])
+            media_list_tmp = ip.Storage_set.values_list('storagemedium__storageMediumID')
+            media_list = [i[0] for i in media_list_tmp]
+            media_str = ', '.join(media_list)
+        context['media_list'] = media_str
+        return context
+    
     def form_valid(self, form):
         self.object = form.save(commit=False)
         num = 0
         for obj in form.instance.ObjectIdentifierValue.split():
+            if form.instance.ReqType == 5 or form.instance.ReqType == '5':
+                ip_obj = ArchiveObject.objects.get(ObjectIdentifierValue=obj)
+                try:
+                    aic_obj = ip_obj.reluuid_set.get().AIC_UUID
+                except ObjectDoesNotExist: 
+                    # if no AIC exists change ReqType to 3 and Path without AIC directory 
+                    self.object.ReqType = 3
+                    self.object.Path = form.instance.Path
+                else:
+                    self.object.Path = op.join(form.instance.Path, aic_obj.ObjectUUID)
             self.object.pk = None
             self.object.ObjectIdentifierValue = obj
             self.object.ReqUUID = uuid.uuid1()
             self.object.save()
             num += 1
         if num == 1:
-            self.success_url = reverse_lazy('access_detail',kwargs={'pk': self.object.pk})
+            self.success_url = reverse_lazy('access_detail',kwargs={'pk': self.object.pk.hex})
         return super(AccessCreate, self).form_valid(form)
         
 class AccessUpdate(UpdateView):
@@ -262,3 +376,20 @@ class AccessDelete(DeleteView):
     @method_decorator(permission_required('essarch.delete_accessqueue'))
     def dispatch(self, *args, **kwargs):
         return super(AccessDelete, self).dispatch( *args, **kwargs)
+
+class AccessClearRequests(DeleteView):
+    success_url = reverse_lazy('access_list')
+    
+    @method_decorator(permission_required('essarch.delete_accessqueue'))
+    def dispatch(self, *args, **kwargs):
+        return super(AccessClearRequests, self).dispatch( *args, **kwargs)
+    
+    def delete(self, request, *args, **kwargs):
+        """
+        Calls the delete() method on the fetched objects and then
+        redirects to the success URL.
+        """
+        self.object = None
+        self.objects = AccessQueue.objects.filter(Status=20, user=self.request.user)
+        self.objects.delete()
+        return HttpResponseRedirect(self.success_url)

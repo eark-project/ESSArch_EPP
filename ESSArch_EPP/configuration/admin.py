@@ -28,15 +28,10 @@ __author__ = "$Author$"
 import re
 __version__ = '%s.%s' % (__majorversion__,re.sub('[\D]', '',__revision__))
 
-from configuration.models import LogEvent, Parameter, SchemaProfile, Path, IPParameter, ESSArchPolicy, ESSConfig, ESSProc, DefaultValue
+from configuration.models import Parameter, SchemaProfile, Path, IPParameter, ESSConfig, ESSProc, DefaultValue, ArchivePolicy,  StorageMethod, StorageTarget, StorageTargets
 from django.contrib import admin
-
-# Logevents
-class LogEventAdmin( admin.ModelAdmin ):
-    list_display = ( 'eventDetail', 'eventType' )
-    search_fields = ( 'eventDetail', )
-        
-admin.site.register( LogEvent, LogEventAdmin )
+#import nested_admin
+from nested_inline.admin import NestedStackedInline, NestedModelAdmin
  
 # XML schemas and namespaces
 class SchemaProfileAdmin( admin.ModelAdmin ):
@@ -126,6 +121,7 @@ class IPParameterAdmin( admin.ModelAdmin ):
 
 admin.site.register(IPParameter, IPParameterAdmin)
 
+"""
 # ESSArchPolicy
 class ESSArchPolicyAdmin( admin.ModelAdmin ):
     list_display = ( 'PolicyName', 'PolicyID', 'PolicyStat', 'AISProjectName', 'AISProjectID', 'Mode' )
@@ -207,6 +203,98 @@ class ESSArchPolicyAdmin( admin.ModelAdmin ):
                 )
 
 admin.site.register(ESSArchPolicy, ESSArchPolicyAdmin)
+"""
+
+# ArchivePolicy
+class StorageTargetInline(NestedStackedInline):
+    model = StorageTarget
+    fk_name = 'storagemethod'
+    extra = 0
+    fields = (
+        'name',
+        'status',
+        'target',
+        )
+    #verbose_name = 'bla'
+    verbose_name_plural = ''
+
+#class StorageMethodInline(nested_admin.NestedStackedInline):
+class StorageMethodInline(NestedStackedInline):
+    model = StorageMethod
+    fk_name = 'archivepolicy'
+    extra = 0
+    fieldsets = (
+        #('test collapse',{
+        (None,{
+            #'classes': ('collapse','in',),
+            'fields': (
+                'name',
+                'status',
+                'type',
+                )}),
+    )
+    inlines = [StorageTargetInline]
+
+#class ArchivePolicyAdmin( nested_admin.NestedAdmin ):
+class ArchivePolicyAdmin(NestedModelAdmin):
+    model = ArchivePolicy
+    list_display = ( 'PolicyName', 'PolicyID', 'PolicyStat', 'AISProjectName', 'AISProjectID', 'Mode' )
+    fieldsets = (
+                (None,{
+                   #'classes': ('collapse','in'),
+                   #'classes': ('wide',),
+                   'fields': (
+                              'PolicyName',
+                              'PolicyID',
+                              'PolicyStat',
+                              'AISProjectName',
+                              'AISProjectID',
+                              'Mode',
+                              'WaitProjectApproval',
+                              'ChecksumAlgorithm',
+                              'ValidateChecksum',
+                              'ValidateXML',
+                              'ManualControll',
+                              'AIPType',
+                              'AIPpath',
+                              'PreIngestMetadata',
+                              'IngestMetadata',
+                              'INFORMATIONCLASS',
+                              'IngestPath',
+                              'IngestDelete',
+                              )}),
+                )
+    inlines = [StorageMethodInline]
+#    class Media:
+#        js = ['js/collapsed_stacked_inlines.js',]
+
+admin.site.register(ArchivePolicy, ArchivePolicyAdmin)
+
+# StorageTargets
+class StorageTargetsAdmin( admin.ModelAdmin ):
+    list_display = ( 'name', 'target' )
+    sortable_field_name = "name"
+    fieldsets = (
+        (None,{
+            'fields': (
+                'name',
+                'status',
+                'type',
+                'format',
+                'blocksize',
+                'maxCapacity',
+                'minChunkSize',
+                'minContainerSize',
+                'minCapacityWarning',
+                'remote_server',
+                'master_server',
+                'target',
+                )}),
+    )
+    #def has_add_permission(self, request):
+    #    return False
+
+admin.site.register(StorageTargets, StorageTargetsAdmin)
 
 # ESSConfig (core)
 class ESSConfigAdmin( admin.ModelAdmin ):

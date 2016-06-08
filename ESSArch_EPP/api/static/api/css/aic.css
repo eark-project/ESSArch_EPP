@@ -1,0 +1,9 @@
+td.collapse-control {
+}
+
+tr.shown td.collapse-control {
+}
+
+tr.child-row td.ip-object{
+  padding-left: 35px !important;
+}

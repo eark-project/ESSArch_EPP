@@ -19,6 +19,7 @@
     Web - http://www.essolutions.se
     Email - essarch@essolutions.se
 '''
+
 __majorversion__ = "2.5"
 __revision__ = "$Revision$"
 __date__ = "$Date$"
@@ -39,7 +40,9 @@ from views import (
     robotReqDetail,
     robotReqUpdate,  
     robotReqDelete,
-    robotInventory, 
+    #robotInventory, 
+    StorageMigration,
+    TargetPrePopulation,
     StorageMaintenance,
     StorageMaintenanceDatatablesView,
     MigrationList,
@@ -55,7 +58,7 @@ from views import (
 urlpatterns = patterns('',   
     url(r'^liststoragemedium/$', storageMediumList.as_view(),name='admin_liststoragemedium'),
     url(r'^storagemediumdt$', storageMediumDatatablesView.as_view(), name='storagemedium-dt'),
-    url(r'^detailstoragemedium/(?P<pk>\d+)/$', storageMediumDetail.as_view(), name='admin_detailstoragemedium'),
+    url(r'^detailstoragemedium/(?P<pk>[^&]*)/$', storageMediumDetail.as_view(), name='admin_detailstoragemedium'),
     url(r'^storagedt$', storageDatatablesView.as_view(), name='storage-dt'),
     #url(r'^liststoragemedium2/$', storageMediumList2,name='admin_liststoragemedium2'),
     #url(r'^liststoragemedium3$', storageMediumList3.as_view(), name='admin_liststoragemedium3'),
@@ -66,10 +69,12 @@ urlpatterns = patterns('',
     url(r'^robotreqdetail/(?P<pk>\d+)/$', robotReqDetail.as_view(), name='robotreq_detail'),
     url(r'^robotrequpdate/(?P<pk>\d+)/$', robotReqUpdate.as_view(), name='robotreq_update'),
     url(r'^robotreqdelete/(?P<pk>\d+)/$', robotReqDelete.as_view(), name='robotreq_delete'),
-    url(r'^robotinventory/(?P<command>\d+)/$', robotInventory.as_view(), name='admin_create_robotinventory'),
-    url(r'^storagemaintenance$', StorageMaintenance.as_view(), name='admin_storagemaintenance'),
+    #url(r'^robotinventory/(?P<command>\d+)/$', robotInventory.as_view(), name='admin_create_robotinventory'),
+    url(r'^storagemigration$', StorageMigration.as_view(), name='admin_storagemigration'),
+    url(r'^migrationtarget$', TargetPrePopulation.as_view(), name='admin_migrationtarget'),
     url(r'^storagemaintenancedt$', StorageMaintenanceDatatablesView.as_view(), name='storagemaintenance-dt'),
-    url(r'^migreqlist/$', MigrationList.as_view(),name='migration_list'),
+    url(r'^storagemaintenance$', StorageMaintenance.as_view(), name='admin_storagemaintenance'),
+    url(r'^migreqlist/$', MigrationList.as_view(), name='migration_list'),
     url(r'^migreqnew$', MigrationCreate.as_view(), name='migration_create_parameter'),
     url(r'^migreqnew/$', MigrationCreate.as_view(), name='migration_create'),
     url(r'^migreqnew/(?P<ip_uuid>[^&]*)/$', MigrationCreate.as_view(), name='migration_create_ip_uuid'),

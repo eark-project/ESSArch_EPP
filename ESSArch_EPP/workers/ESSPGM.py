@@ -32,8 +32,10 @@ from xml.dom.minidom import Document
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from django.utils import timezone
-from essarch.models import ArchiveObject, robotQueue, IOqueue, eventIdentifier, storageMedium
-from configuration.models import Parameter
+#from essarch.models import ArchiveObject, robotQueue, IOqueue, eventIdentifier, storageMedium
+from essarch.models import ArchiveObject, eventIdentifier
+from configuration.models import Path
+from Storage.models import storageMedium
 from django import db
 
 Debug = 0
@@ -84,41 +86,50 @@ class DB:
     "Update AIP Status"
     ###############################################
     def SetAIPstatus(self, local_table, ext_table, AgentIdentifierValue, ObjectUUID, StatusProcess, StatusActivity):
-        self.timestamp_utc = datetime.datetime.utcnow().replace(microsecond=0,tzinfo=pytz.utc)
-        self.timestamp_dst = self.timestamp_utc.astimezone(self.tz)
-        res,errno,why = ESSDB.DB().action(local_table,'UPD',('StatusProcess',StatusProcess,
-                                                             'StatusActivity',StatusActivity,
-                                                             'LastEventDate',self.timestamp_utc.replace(tzinfo=None),
-                                                             'linkingAgentIdentifierValue',AgentIdentifierValue,
-                                                             'LocalDBdatetime',self.timestamp_utc.replace(tzinfo=None)),
-                                                            ('ObjectUUID',ObjectUUID))
-        if errno: return errno,why
-        elif ext_table:
+        timestamp_utc = datetime.datetime.utcnow().replace(microsecond=0,tzinfo=pytz.utc)
+        timestamp_dst = timestamp_utc.astimezone(self.tz)
+        ArchiveObject_obj = ArchiveObject.objects.get(ObjectUUID=ObjectUUID)
+        ArchiveObject_obj.StatusProcess=StatusProcess
+        ArchiveObject_obj.StatusActivity=StatusActivity
+        ArchiveObject_obj.LastEventDate=timestamp_utc
+        ArchiveObject_obj.linkingAgentIdentifierValue=AgentIdentifierValue
+        ArchiveObject_obj.LocalDBdatetime=timestamp_utc
+        ArchiveObject_obj.save(update_fields=['StatusProcess',
+                                              'StatusActivity',
+                                              'LastEventDate',
+                                              'linkingAgentIdentifierValue',
+                                              'LocalDBdatetime',
+                                              ])
+        if ext_table:
             ext_res,ext_errno,ext_why = ESSMSSQL.DB().action(ext_table,'UPD',('StatusProcess',StatusProcess,
                                                                               'StatusActivity',StatusActivity,
-                                                                              'LastEventDate',self.timestamp_dst.replace(tzinfo=None),
+                                                                              'LastEventDate',timestamp_dst.replace(tzinfo=None),
                                                                               'linkingAgentIdentifierValue',AgentIdentifierValue),
                                                                              ('ObjectGuid',ObjectUUID))
             if ext_errno: return ext_errno,ext_why
             else:
-                res,errno,why = ESSDB.DB().action(local_table,'UPD',('ExtDBdatetime',self.timestamp_utc.replace(tzinfo=None)),('ObjectUUID',ObjectUUID))
-                if errno: return errno,why
+                ArchiveObject_obj.ExtDBdatetime=timestamp_utc
+                ArchiveObject_obj.save(update_fields=['ExtDBdatetime'])
         return 0,''
 
     "Update storageMediumLocation and storageMediumLocationStatus"
     ###############################################
     def SetStorageMediumLocation(self, local_table, ext_table, AgentIdentifierValue, storageMediumID, storageMediumLocation, storageMediumLocationStatus, storageMediumDate):
-        self.timestamp_utc = datetime.datetime.utcnow().replace(microsecond=0,tzinfo=pytz.utc)
-        self.timestamp_dst = self.timestamp_utc.astimezone(self.tz)
-        res,errno,why = ESSDB.DB().action(local_table,'UPD',('storageMediumLocationStatus',storageMediumLocationStatus,
-                                                             'storageMediumLocation',storageMediumLocation,
-                                                             'storageMediumDate',storageMediumDate.replace(tzinfo=None),
-                                                             'linkingAgentIdentifierValue',AgentIdentifierValue,
-                                                             'LocalDBdatetime',self.timestamp_utc.replace(tzinfo=None)),
-                                                            ('storageMediumID',storageMediumID))
-
-        if errno: return errno,why
-        elif ext_table:
+        timestamp_utc = datetime.datetime.utcnow().replace(microsecond=0,tzinfo=pytz.utc)
+        timestamp_dst = timestamp_utc.astimezone(self.tz)
+        storageMedium_obj = storageMedium.objects.get(storageMediumID=storageMediumID)
+        storageMedium_obj.storageMediumLocationStatus=storageMediumLocationStatus
+        storageMedium_obj.storageMediumLocation=storageMediumLocation
+        storageMedium_obj.storageMediumDate=storageMediumDate
+        storageMedium_obj.linkingAgentIdentifierValue=AgentIdentifierValue
+        storageMedium_obj.LocalDBdatetime=timestamp_utc
+        storageMedium_obj.save(update_fields=['storageMediumLocationStatus',
+                                              'storageMediumLocation',
+                                              'storageMediumDate',
+                                              'linkingAgentIdentifierValue',
+                                              'LocalDBdatetime',
+                                              ])        
+        if ext_table:
             ext_res,ext_errno,ext_why = ESSMSSQL.DB().action(ext_table,'UPD',('storageMediumLocationStatus',storageMediumLocationStatus,
                                                                               'storageMediumLocation',storageMediumLocation,
                                                                               'storageMediumDate',storageMediumDate.astimezone(self.tz).replace(tzinfo=None),
@@ -127,15 +138,16 @@ class DB:
 
             if ext_errno: return ext_errno,ext_why
             else:
-                res,errno,why = ESSDB.DB().action(local_table,'UPD',('ExtDBdatetime',self.timestamp_utc.replace(tzinfo=None)),('storageMediumID',storageMediumID))
-                if errno: return errno,why
+                storageMedium_obj.ExtDBdatetime=timestamp_utc
+                storageMedium_obj.save(update_fields=['ExtDBdatetime'])
         return 0,''
 
+    """
     "Update AIP Status"
     ###############################################
     def CreateWriteReq(self, AIPpath, ObjectUUID, ObjectIdentifierValue, ObjectSize, MetaObjectSize, sm_list):
         #sm_list = [self.sm_type,self.sm_format,self.sm_blocksize,self.sm_maxCapacity,self.sm_minChunkSize,self.sm_minContainerSize,self.sm_target,self.sm_location]
-        if sm_list[0] in range(300,309): 
+        if sm_list[0] in range(300,330): 
             self.cmd = 10
             self.t_prefix = sm_list[6]
         elif sm_list[0] in range(200,201):
@@ -199,7 +211,7 @@ class DB:
     ###############################################
     def CreateReadReq(self, DIPpath, ObjectUUID, ObjectIdentifierValue, ObjectMessageDigest, sm_list):
         #sm_list = [self.sm_type,self.sm_format,self.sm_blocksize,self.sm_maxCapacity,self.sm_minChunkSize,self.sm_minContainerSize,self.sm_target,self.sm_location,self.contentLocationValue]
-        if sm_list[0] in range(300,309):
+        if sm_list[0] in range(300,330):
             self.cmd = 20
             self.storageMediumID = sm_list[6]
         elif sm_list[0] in range(200,201):
@@ -261,7 +273,7 @@ class DB:
 #                                                       'Status',self.Status))
 #        if self.errno: return self.work_uuid, self.errno, self.why
         return self.work_uuid, 0, ''
-
+    """
 
     "Get AIC relation to AIPs"
     ###############################################
@@ -397,7 +409,14 @@ class Check:
     "Get filetree"
     ###############################################
     def GetFiletree2(self,path,checksum=None,allow_unknown_filetypes=False):
-        mimefilepath = '/ESSArch/config/data/mime.types'
+        try:
+            mimefilepath = Path.objects.get(entity='path_mimetypes_definitionfile').value
+        except Path.DoesNotExist as e:
+            if os.path.exists('/ESSArch/config/mime.types'):
+                mimefilepath = '/ESSArch/config/mime.types'
+            else:
+                mimefilepath = '/ESSArch/config/data/mime.types'
+            
         if os.path.exists(mimefilepath):
             mimetypes.suffix_map={}
             mimetypes.encodings_map={}
@@ -1087,6 +1106,7 @@ class Check:
             MIMEtype = 'unknown'
         return MIMEtype
 
+    """
     "Extract and Verify AIPs in Storage Method and return OK or Fail"
     ##############################################
     # storageMediumID = storageMediumID (FB0001,disk) (always specified)
@@ -1303,7 +1323,7 @@ class Check:
             self.event_info = 'Failed to verify storageMediumID: ' + str(self.storageMediumID)
             logging.error(self.event_info)
             return [[None],self.storageMediumID,self.verifydir],4,self.event_info
-
+    
     ###############################################
     def AIPunpack(self,ObjectIdentifierValue,target,mets = 1,VerifyChecksum = 1):
         ProcVersion = __version__
@@ -1533,8 +1553,9 @@ class Check:
         d = os.path.dirname(f)
         if not os.path.exists(d):
             os.makedirs(d)
+    """
 
-
+"""
 class Robot:
     TimeZone = timezone.get_default_timezone_name()
     tz=timezone.get_default_timezone()
@@ -1671,7 +1692,7 @@ class Robot:
                                     logging.debug('self.s_elements[6][:6]: ' + str(self.s_elements[6][:6]))
                                     logging.debug('self.TapeExistFlag: ' + str(self.TapeExistFlag))
                                 if self.TapeExistFlag:                        #Check if t_id exist in archtape
-                                    res,errno,why = ESSDB.DB().action('robot','UPD',('status','ArchTape',
+                                    res,errno,why = ESSDB.DB().action('robot','UPD',('status','Full',
                                                                                      't_id',self.s_elements[6][:6],
                                                                                      'drive_id','99'),
                                                                                     ('slot_id',self.s_elements[3]))
@@ -1687,7 +1708,7 @@ class Robot:
                                     if errno:
                                         logging.error('Failed to update location for MediumID: %s , error: %s',self.s_elements[6][:6],str(why))
                                 else:
-                                    res,errno,why = ESSDB.DB().action('robot','UPD',('status','Ready',
+                                    res,errno,why = ESSDB.DB().action('robot','UPD',('status','Empty',
                                                                                      't_id',self.s_elements[6][:6],
                                                                                      'drive_id','99'),
                                                                                     ('slot_id',self.s_elements[3]))
@@ -1723,9 +1744,9 @@ class Robot:
                         self.e_elements = self.word.split(self.line)
                         if Debug: print 'Export/Import Element:', self.e_elements
                         if self.e_elements[6] == 'Full':
-                            self.TapeExistFlag = ESSDB.DB().action('archtape','GET',('status',),('t_id',self.e_elements[8]))
-                            if self.TapeExistFlag:                        #Check if t_id exist in archtape
-                                ESSDB.DB().action('robotie','UPD',('status','ArchTape','t_id',self.e_elements[8],'drive_id','99'),('slot_id',self.e_elements[3]))
+                            self.TapeExistFlag = ESSDB.DB().action('Full','GET',('status',),('t_id',self.e_elements[8]))
+                            if self.TapeExistFlag:                        #Check if t_id exist in archtape (full tape)
+                                ESSDB.DB().action('robotie','UPD',('status','Full','t_id',self.e_elements[8],'drive_id','99'),('slot_id',self.e_elements[3]))
                             else:
                                 ESSDB.DB().action('robotie','UPD',('status','Ready','t_id',self.e_elements[8],'drive_id','99'),('slot_id',self.e_elements[3]))
                         elif self.e_elements[6] == 'Empty':
@@ -2120,6 +2141,7 @@ class Robot:
             # Problem to position tape
             logging.error(str(self.t_id) + ' has problem to position to writeposition ' + str(self.t_pos))
             return 1, self.t_id, self.tapedev, self.t_pos
+"""
 
 class svardb:
     def __init__(self):
@@ -2253,7 +2275,7 @@ class Events:
                 eventIdentifier_obj.linkingObjectIdentifierValue = ObjectIdentifierValue
                 eventIdentifier_obj.save()
             #except _mysql_exceptions.Warning,why:
-            except (MySQLdb.Warning), (why):
+            except (MySQLdb.Warning, why):
                 if why.startswith("Data truncated for column 'eventOutcomeDetailNote' at row 1"):
                     logging.warning('Problem to update local eventDB for eventType: ' + str(eventType) + ', object: ' + Check().unicode2isostr(ObjectIdentifierValue) + ', why: ' + Check().unicode2isostr(why))
                     return 5

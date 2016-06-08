@@ -1,8 +1,6 @@
-#!/usr/bin/env /ESSArch/pd/python/bin/python
-
 '''
     ESSArch - ESSArch is an Electronic Archive system
-    Copyright (C) 2010-2013  ES Solutions AB, Henrik Ek
+    Copyright (C) 2010-2016  ES Solutions AB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -21,14 +19,18 @@
     Web - http://www.essolutions.se
     Email - essarch@essolutions.se
 '''
-__majorversion__ = "2.5"
-__revision__ = "$Revision$"
-__date__ = "$Date$"
-__author__ = "$Author$"
-import re
-__version__ = '%s.%s' % (__majorversion__,re.sub('[\D]', '',__revision__))
+try:
+    import ESSArch_EPP as epp
+except ImportError:
+    __version__ = '2'
+else:
+    __version__ = epp.__version__ 
 
 import os, thread, datetime, time, logging, sys, shutil, ESSDB, ESSPGM
+from configuration.models import ESSConfig, ESSProc, ArchivePolicy
+
+import django
+django.setup()
 
 class WorkingThread:
     "Thread is working in the background"
@@ -38,10 +40,10 @@ class WorkingThread:
         while 1:
                 if self.mDieFlag==1: break      # Request for death
                 self.mLock.acquire()
-                self.Time,self.Run = ESSDB.DB().action('ESSProc','GET',('Time','Run'),('Name',ProcName))[0]
+                self.Time, self.Run = ESSProc.objects.filter(Name=ProcName).values_list('Time','Run')[0]
                 if self.Run == '0':
                     logging.info('Stopping ' + ProcName)
-                    ESSDB.DB().action('ESSProc','UPD',('Status','0','Run','0','PID','0'),('Name',ProcName))
+                    ESSProc.objects.filter(Name=ProcName).update(Status='0', Run='0', PID=0)
                     self.RunFlag=0
                     self.mLock.release()
                     if Debug: logging.info('RunFlag: 0')
@@ -50,7 +52,6 @@ class WorkingThread:
                 # Process Item 
                 lock=thread.allocate_lock()
                 self.IngestTable = ESSDB.DB().action('ESSConfig','GET',('Value',),('Name','IngestTable'))[0][0]
-                self.PolicyTable = ESSDB.DB().action('ESSConfig','GET',('Value',),('Name','PolicyTable'))[0][0]
                 if ExtDBupdate:
                     self.ext_IngestTable = self.IngestTable
                 else:
@@ -64,16 +65,19 @@ class WorkingThread:
                                                                                   'StatusActivity','=',0))
                 if errno: logging.error('Failed to access Local DB, error: ' + str(why))
                 for self.obj in self.dbget:
-                    if ESSDB.DB().action('ESSProc','GET',('Run',),('Name',ProcName))[0][0]=='0':
+                    if ESSProc.objects.get(Name=ProcName).Run == '0':
                         logging.info('Stopping ' + ProcName)
-                        ESSDB.DB().action('ESSProc','UPD',('Status','0','Run','0','PID','0'),('Name',ProcName))
+                        ESSProc.objects.filter(Name=ProcName).update(Status='0', Run='0', PID=0)
                         thread.interrupt_main()
                         break
                     self.ObjectUUID = self.obj[0]
                     self.ObjectIdentifierValue = self.obj[1]
                     self.PolicyId = self.obj[2]
                     self.DataObjectSize = self.obj[3]
-                    self.metatype,self.RemoveFlag,self.IngestPath = ESSDB.DB().action(self.PolicyTable,'GET',('IngestMetadata','IngestDelete','IngestPath'),('PolicyID',self.PolicyId))[0]
+                    ArchivePolicy_obj = ArchivePolicy.objects.get(PolicyStat=1, PolicyID=self.PolicyId)
+                    self.metatype = ArchivePolicy_obj.IngestMetadata
+                    self.RemoveFlag = ArchivePolicy_obj.IngestDelete
+                    self.IngestPath = ArchivePolicy_obj.IngestPath
                     self.dirpath=os.path.join(self.IngestPath,self.ObjectIdentifierValue)
                     if Debug: 
                         logging.info('self.obj: '+str(self.obj))
@@ -146,7 +150,6 @@ class WorkingThread:
 # Table: ESSProc with Name: SIPRemove, LogFile: /log/xxx.log, Time: 5, Status: 0/1, Run: 0/1
 # Table: ESSConfig with Name: IngestPath Value: /tmp/Ingest
 # Table: ESSConfig with Name: IngestTable Value: IngestObject
-# Table: ESSConfig with Name: PolicyTable Value: archpolicy
 # Arg: -d = Debug on
 #######################################################################################################
 if __name__ == '__main__':
@@ -158,7 +161,7 @@ if __name__ == '__main__':
         if sys.argv[1] == '-v' or sys.argv[1] == '-V':
             print ProcName,'Version',ProcVersion
             sys.exit()
-    LogFile,Time,Status,Run = ESSDB.DB().action('ESSProc','GET',('LogFile','Time','Status','Run'),('Name',ProcName))[0]
+    LogFile,Time,Status,Run = ESSProc.objects.filter(Name=ProcName).values_list('LogFile','Time','Status','Run')[0]
 
     LogLevel = logging.INFO
     #LogLevel = logging.DEBUG

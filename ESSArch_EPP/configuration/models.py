@@ -1,8 +1,6 @@
-#!/usr/bin/env /ESSArch/python27/bin/python
-# -*- coding: UTF-8 -*-
 '''
     ESSArch - ESSArch is an Electronic Archive system
-    Copyright (C) 2010-2013  ES Solutions AB
+    Copyright (C) 2010-2016  ES Solutions AB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -21,48 +19,21 @@
     Web - http://www.essolutions.se
     Email - essarch@essolutions.se
 '''
-__majorversion__ = "2.5"
-__revision__ = "$Revision$"
-__date__ = "$Date$"
-__author__ = "$Author$"
-import re
-__version__ = '%s.%s' % (__majorversion__,re.sub('[\D]', '',__revision__))
+try:
+    import ESSArch_EPP as epp
+except ImportError:
+    __version__ = '2'
+else:
+    __version__ = epp.__version__ 
 
 from django.db import models
 from django.contrib import admin
 from picklefield.fields import PickledObjectField
+from Storage.models import MediumType_CHOICES, MediumFormat_CHOICES, MediumBlockSize_CHOICES, StorageType_CHOICES
 
 import datetime
 import sys
-
-# Logevents
-class LogEvent(models.Model):
-    eventType   = models.IntegerField( default=0, unique=True )
-    eventDetail = models.CharField( max_length = 255 )
-
-    class Meta:
-        ordering = ['eventType']
-        permissions = (
-                       ("Can_view_log_menu", "Can_view_log_menu"),
-                       )
-
-    def __unicode__(self):
-        # create a unicode representation of this object
-        return self.eventDetail
-
-    def populate_from_form(self, form):
-        # pull out all fields from a form and use them to set
-        # the values of this object.
-        for field in LogEvent._meta.fields:
-            if field.name in form.cleaned_data:
-                setattr( self, field.name, form.cleaned_data[field.name] )
-
-    def get_value_array(self):
-        # make an associative array of all fields  mapping the field
-        # name to the current value of the field
-        return { field.name: field.value_to_string(self) 
-                 for field in LogEvent._meta.fields }
-
+import uuid
 
 # Parameters
 class Parameter(models.Model):
@@ -182,6 +153,13 @@ enabled_disabled_CHOICES = (
     (1, 'Enabled'),
 )
 
+StorageTarget_Status_CHOICES = (
+    (0, 'Disabled'),
+    (1, 'Enabled'),
+    (2, 'ReadOnly'),
+    (3, 'Migrate'),
+)
+
 Mode_Policy_CHOICES = (
     (0, 'Master'),
     (2, 'AIS'),
@@ -219,42 +197,24 @@ INFORMATIONCLASS_Policy_CHOICES = (
     (4, '4'),
 )
 
-MediumType_CHOICES = (
-    (200, 'DISK'),
-    (301, 'IBM-LTO1'),
-    (302, 'IBM-LTO2'),
-    (303, 'IBM-LTO3'),
-    (304, 'IBM-LTO4'),
-    (305, 'IBM-LTO5'),
-    #(306, 'IBM-LTO6'),
-)
-
-MediumFormat_CHOICES = (
-    (102, '102 (Media label)'),
-    (103, '103 (AIC support)'),
-)
-
-MediumBlockSize_CHOICES = (
-    (128, '64K'),
-    (256, '128K'),
-    (512, '256K'),
-    (1024, '512K'),
-    (2048, '1024K'),
-)
-
 minChunkSize_CHOICES = (
     (0, 'Disabled'),
-    (1000000, '1 MByte'),
+    (1048576, '1 MByte'),
     (1073741824, '1 GByte'),
     (53687091201, '5 GByte'),
     (10737418240, '10 GByte'),
     (107374182400, '100 GByte'),
+    (214748364800, '200 GByte'),
+    (322122547200, '300 GByte'),
+    (429496729600, '400 GByte'),
+    (536870912000, '500 GByte'),
 )
 
 minContainerSize_CHOICES = (
     (0, 'Disabled'),
 )
 
+"""
 class ESSArchPolicy(models.Model):
     PolicyName          = models.CharField('Policy Name', max_length=255)
     PolicyID            = models.IntegerField('Policy ID', unique=True)
@@ -313,6 +273,84 @@ class ESSArchPolicy(models.Model):
     class Meta:
         db_table = 'ESSArchPolicy'
         verbose_name = 'Archive policy'
+"""
+
+class ArchivePolicy(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    #PolicyID = models.UUIDField(default=uuid.uuid4, unique=True)
+    PolicyID = models.CharField('Policy ID', max_length=32, unique=True)
+    PolicyName = models.CharField('Policy Name', max_length=255)
+    PolicyStat = models.IntegerField('Policy Status', choices=enabled_disabled_CHOICES, default=0)
+    AISProjectName = models.CharField('AIS Policy Name', max_length=255, blank=True)
+    AISProjectID = models.CharField('AIS Policy ID', max_length=255, blank=True)
+    Mode = models.IntegerField(choices=Mode_Policy_CHOICES, default=0)
+    WaitProjectApproval = models.IntegerField('Wait for approval', choices=WaitProjectApprobal_Policy_CHOICES, default=2)
+    ChecksumAlgorithm = models.IntegerField('Checksum algorithm', choices=ChecksumAlgorithm_CHOICES,default=1)
+    ValidateChecksum = models.IntegerField('Validate checksum', choices=enabled_disabled_CHOICES,default=1)
+    ValidateXML = models.IntegerField('Validate XML', choices=enabled_disabled_CHOICES,default=1)
+    ManualControll = models.IntegerField('Manual Control', choices=enabled_disabled_CHOICES,default=0)
+    AIPType = models.IntegerField('AIP type', choices=AIPType_Policy_CHOICES,default=1)
+    AIPpath = models.CharField('Temp work directory', max_length=255,default='/ESSArch/work')
+    PreIngestMetadata = models.IntegerField('Pre ingest metadata',choices=PreIngestMetadata_Policy_CHOICES,default=0)
+    IngestMetadata = models.IntegerField('Ingest metadata', choices=IngestMetadata_Policy_CHOICES,default=4)
+    INFORMATIONCLASS = models.IntegerField('Information class', choices=INFORMATIONCLASS_Policy_CHOICES, default=0)
+    IngestPath = models.CharField('Ingest directory', max_length=255,default='/ESSArch/ingest')
+    IngestDelete = models.IntegerField('Delete SIP after success to create AIP', choices=enabled_disabled_CHOICES,default=1)
+    class Meta:
+        ordering = ['PolicyName']
+
+    def __unicode__(self):
+        if len(self.PolicyName): return self.PolicyName
+        else: return unicode(self.PolicyID)
+
+class StorageMethod(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField('Name', max_length=255, blank=True)
+    status = models.IntegerField('Storage method status', choices=enabled_disabled_CHOICES,default=0)
+    type = models.IntegerField('Type', choices=StorageType_CHOICES,default=200)
+    archivepolicy = models.ForeignKey('ArchivePolicy')
+    class Meta:
+        ordering = ['name']
+
+    def __unicode__(self):
+        if len(self.name): return self.name
+        else: return unicode(self.id)
+
+class StorageTarget(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField('Name', max_length=255, blank=True)
+    status = models.IntegerField('Storage target status', choices=StorageTarget_Status_CHOICES,default=0)
+    target = models.ForeignKey('StorageTargets')
+    storagemethod = models.ForeignKey('StorageMethod')
+    class Meta:
+        verbose_name = 'Target'
+        ordering = ['name']
+        
+    def __unicode__(self):
+        if len(self.name): return self.name
+        else: return unicode(self.id)
+
+class StorageTargets(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField('Name', max_length=255, unique=True)
+    status = models.IntegerField('Storage target status', choices=enabled_disabled_CHOICES,default=1)
+    type = models.IntegerField('Type', choices=MediumType_CHOICES,default=200)
+    format = models.IntegerField('Format', choices=MediumFormat_CHOICES,default=103)
+    blocksize = models.BigIntegerField('BlockSize (tape)', choices=MediumBlockSize_CHOICES,default=1024)
+    maxCapacity = models.BigIntegerField('Max capacity (0=Disabled)', default=0)
+    minChunkSize = models.BigIntegerField('Min chunk size', choices=minChunkSize_CHOICES, default=0)
+    minContainerSize = models.BigIntegerField('Min container size (0=Disabled)', choices=minContainerSize_CHOICES, default=0)
+    minCapacityWarning = models.BigIntegerField('Min capacity warning (0=Disabled)', default=0)
+    remote_server = models.CharField('Remote server (https://hostname,user,password)', max_length=255, blank=True)
+    master_server = models.CharField('Master server (https://hostname,user,password)', max_length=255, blank=True)
+    target = models.CharField('Target (URL, path or barcodeprefix)', max_length=255)
+    class Meta:
+        verbose_name = 'Storage Target'
+        ordering = ['name']
+
+    def __unicode__(self):
+        if len(self.name): return self.name
+        else: return unicode(self.id)
 
 class sm(object):
     id                  = 0

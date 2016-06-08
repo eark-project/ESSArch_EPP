@@ -1,6 +1,6 @@
 '''
     ESSArch - ESSArch is an Electronic Archive system
-    Copyright (C) 2010-2013  ES Solutions AB
+    Copyright (C) 2010-2016  ES Solutions AB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -19,19 +19,21 @@
     Web - http://www.essolutions.se
     Email - essarch@essolutions.se
 '''
-__majorversion__ = "2.5"
-__revision__ = "$Revision$"
-__date__ = "$Date$"
-__author__ = "$Author$"
-import re
-__version__ = '%s.%s' % (__majorversion__,re.sub('[\D]', '',__revision__))
+try:
+    import ESSArch_EPP as epp
+except ImportError:
+    __version__ = '2'
+else:
+    __version__ = epp.__version__ 
+
 from jobtastic import JobtasticTask
-from configuration.models import ESSProc, ESSArchPolicy, sm
+from configuration.models import ESSProc, sm, ArchivePolicy
 import psutil, logging, os
 from django.core.mail import send_mail, mail_admins
 from datetime import datetime
 from monitoring.models import MonitoringObject
-from essarch.models import storageMedium, robot
+from essarch.models import robot
+from Storage.models import storageMedium
 
 logger = logging.getLogger('essarch.monitoring')
 
@@ -52,7 +54,7 @@ class CheckProcessTask(JobtasticTask):
     #soft_time_limit = None
     
     # Hard time limit. Defaults to the CELERYD_TASK_TIME_LIMIT setting.
-    time_limit = 10
+    time_limit = 60
 
     def calculate_result(self, process_list):
         tasks = process_list
@@ -63,7 +65,9 @@ class CheckProcessTask(JobtasticTask):
         self.update_progress(0, num_tasks)
 
         # Get ps list from OS        
+        logger.debug('Try to get process list from OS')
         ps_dict = self.get_ps_dict(process_list)
+        logger.debug('Succeeded to get process list from OS')
            
         # Create all tasks
         for counter, task in enumerate(tasks):
@@ -78,7 +82,7 @@ class CheckProcessTask(JobtasticTask):
                     for ps_obj in ps_objs:
                         if ps_obj.pid == ESSProc_obj.PID:
                             logger.debug('PID: %s' % ps_obj.pid)
-                        elif ps_obj.ppid == ESSProc_obj.PID:
+                        elif ps_obj.ppid() == ESSProc_obj.PID:
                             children_pids.append(ps_obj.pid)
                         elif ESSProc_obj.alarm == 0:
                             # Found unknown processes
@@ -136,7 +140,7 @@ class CheckProcessTask(JobtasticTask):
             process_dict[process_item] = []
         for p in psutil.process_iter():
             for process_item in process_list:
-                if process_item in p.cmdline:
+                if process_item in p.cmdline():
                     process_dict[process_item].append(p)
         return process_dict
 
@@ -157,7 +161,7 @@ class CheckProcFilesTask(JobtasticTask):
     #soft_time_limit = None
     
     # Hard time limit. Defaults to the CELERYD_TASK_TIME_LIMIT setting.
-    time_limit = 10
+    time_limit = 60
 
     def calculate_result(self, proc_log_path):
         
@@ -230,7 +234,7 @@ class CheckStorageMediumsTask(JobtasticTask):
     #soft_time_limit = None
     
     # Hard time limit. Defaults to the CELERYD_TASK_TIME_LIMIT setting.
-    time_limit = 10
+    time_limit = 60
 
     def calculate_result(self, email='admin'):
         
@@ -250,9 +254,34 @@ class CheckStorageMediumsTask(JobtasticTask):
         # Populating MinTape_dict and target_dict
         target_dict = {}
         MinTape_dict = {}
-        ESSArchPolicy_objs = ESSArchPolicy.objects.filter(PolicyStat=1)
-        for ep_obj in ESSArchPolicy_objs:
-            sm_objs = []
+        ArchivePolicy_objs = ArchivePolicy.objects.filter(PolicyStat=1)
+        for ArchivePolicy_obj in ArchivePolicy_objs:
+            sm_objs = ArchivePolicy_obj.storagemethod_set.filter(status=1)
+            for sm_obj in sm_objs:
+                target_obj = None
+                st_objs = sm_obj.storagetarget_set.filter(status=1)
+                if st_objs.count() == 1:
+                    st_obj = st_objs[0]
+                elif st_objs.count() == 0:
+                    logger.error('The storage method %s has no enabled target configured' % sm_obj.name)
+                elif st_objs.count() > 1:
+                    logger.error('The storage method %s has too many targets configured with the status enabled' % sm_obj.name)
+                if st_obj.target.status == 1:
+                    target_obj = st_obj.target
+                else:
+                    logger.error('The target %s is disabled' % st_obj.target.name)
+                
+                if target_obj is not None:
+                    if target_obj.minCapacityWarning > 0:
+                        try:
+                            if not MinTape_dict[target_obj.target] > target_obj.minCapacityWarning:
+                                MinTape_dict[target_obj.target] = target_obj.minCapacityWarning
+                        except KeyError:
+                            MinTape_dict[target_obj.target] = target_obj.minCapacityWarning
+                            target_dict[target_obj.target] = 0   
+            """                        
+            #sm_objs = ep_obj.
+            #sm_objs = []
             for i in [1,2,3,4]:
                 sm_obj = sm()
                 sm_obj.id = i
@@ -275,6 +304,7 @@ class CheckStorageMediumsTask(JobtasticTask):
                     except KeyError:
                         MinTape_dict[sm_obj.target] = sm_obj.minCapacityWarning
                         target_dict[sm_obj.target] = 0       
+        """
 
         # Create all tasks
         for counter, task in enumerate(tasks):
@@ -282,13 +312,13 @@ class CheckStorageMediumsTask(JobtasticTask):
             alarm_sub = ''
             alarm_msg = ''
             if task == tasks_todo.pop(0):
-                if task.status == 'ArchTape':
+                if task.status == 'Full':
                     event_info = '%s - Slot:%s' % (task.t_id, task.slot_id)
                     ArchTape_list.append(event_info)
-                elif task.status == 'WriteTape':
+                elif task.status == 'Write':
                     event_info = '%s - Slot:%s' % (task.t_id, task.slot_id)
                     WriteTape_list.append(event_info)
-                elif task.status == 'Ready':
+                elif task.status == 'Empty':
                     event_info = '%s - Slot:%s' % (task.t_id, task.slot_id)
                     EmptyTape_list.append(event_info)
                     for target in target_dict.keys():

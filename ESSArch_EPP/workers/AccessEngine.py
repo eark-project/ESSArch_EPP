@@ -1,7 +1,7 @@
 #!/usr/bin/env /ESSArch/pd/python/bin/python
 '''
     ESSArch - ESSArch is an Electronic Archive system
-    Copyright (C) 2010-2013  ES Solutions AB, Henrik Ek
+    Copyright (C) 2010-2016  ES Solutions AB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -20,105 +20,145 @@
     Web - http://www.essolutions.se
     Email - essarch@essolutions.se
 '''
-__majorversion__ = "2.5"
-__revision__ = "$Revision$"
-__date__ = "$Date$"
-__author__ = "$Author$"
-import re
-__version__ = '%s.%s' % (__majorversion__,re.sub('[\D]', '',__revision__))
+try:
+    import ESSArch_EPP as epp
+except ImportError:
+    __version__ = '2'
+else:
+    __version__ = epp.__version__
 
-import thread, multiprocessing, time, logging, sys, ESSDB, ESSPGM, ESSlogging
+import thread, multiprocessing, time, logging, sys, ESSDB, ESSPGM, ESSlogging, os, tarfile, datetime, ESSMD, traceback
 
 from essarch.models import AccessQueue, ArchiveObject
-from django import db
+from essarch.libs import calcsum, unicode2str
+from django.db import connection
+from Storage.models import storage, storageMedium, IOQueue
+from Storage.libs import StorageMethodRead
+from StorageMethodDisk.tasks import ReadStorageMethodDisk
+from StorageMethodTape.tasks import ReadStorageMethodTape
+from celery.result import AsyncResult
 
-class Functions:
-    def GenerateDIPProc(self,ReqUUID):
-        "Generate DIP for request in Accessqueue"
+import django
+django.setup()
+
+class AccessError(Exception):
+    def __init__(self, value):
+        self.value = value
+        super(AccessError, self).__init__(value)
+
+class Access:
+    def ProcessAccessRequest(self,ReqUUID):
+        """Process access request
+        
+        :param ReqUUID: ReqUUID in database table AccessQueue
+        
+        """
         try:
-            DbRow = AccessQueue.objects.filter(ReqUUID = ReqUUID)[:1].get()
-            self.run = 1
-            self.unpack = 0
-            self.delete = 0
-            self.process_name = multiprocessing.current_process().name
-            self.process_pid = multiprocessing.current_process().pid
-            aic_support = False
-            DbRow.Status = 5
-            DbRow.save()
+            logger.debug('Start ProcessAccessRequest')
+            logger.debug('ReqUUID: %s' % ReqUUID)
+            connection.close() # Fix (2006, 'MySQL server has gone away')
+            AccessQueue_obj = AccessQueue.objects.get(ReqUUID = ReqUUID)
+            process_name = multiprocessing.current_process().name
+            logger.debug('process_name: %s' % process_name)
+            process_pid = multiprocessing.current_process().pid
+            logger.debug('process_pid: %s' % process_pid)
 
-            if DbRow.ReqType in (1,3,4,5):
-                event_info = 'Start Generate DIP Process for ObjectIdentifierValue: %s, ReqUUID: %s' % (DbRow.ObjectIdentifierValue,DbRow.ReqUUID)
+            AccessQueue_obj.Status = 5
+            AccessQueue_obj.save()
+
+            if AccessQueue_obj.ReqType in (1,3,4,5):
+                event_info = 'Start Generate DIP Process for ObjectIdentifierValue: %s, ReqUUID: %s' % (AccessQueue_obj.ObjectIdentifierValue,AccessQueue_obj.ReqUUID)
                 logger.info(event_info)
-                ESSPGM.Events().create('1202',DbRow.ReqPurpose,'ESSArch Access',ProcVersion,'0',event_info,2,DbRow.ObjectIdentifierValue)
-            elif DbRow.ReqType == 2:
-                event_info = 'Start quickverify storageMediumID Process for storageMediumID: %s, ReqUUID: %s' % (DbRow.storageMediumID,DbRow.ReqUUID)
+                ESSPGM.Events().create('1202',AccessQueue_obj.ReqPurpose,'ESSArch Access',ProcVersion,'0',event_info,2,AccessQueue_obj.ObjectIdentifierValue)
+            elif AccessQueue_obj.ReqType == 2:
+                event_info = 'Start quickverify storageMediumID Process for storageMediumID: %s, ReqUUID: %s' % (AccessQueue_obj.storageMediumID,AccessQueue_obj.ReqUUID)
                 logger.info(event_info)
-                ESSPGM.Events().create('2202',DbRow.ReqPurpose,'ESSArch Access',ProcVersion,'0',event_info,2,DbRow.ObjectIdentifierValue)
+                ESSPGM.Events().create('2202',AccessQueue_obj.ReqPurpose,'ESSArch Access',ProcVersion,'0',event_info,2,AccessQueue_obj.ObjectIdentifierValue)
 
-            if DbRow.ReqType == 1:
-                self.unpack = 1
-                self.delete = 0
-            elif DbRow.ReqType == 3:
-                self.unpack = 0
-                self.delete = 0
-            elif DbRow.ReqType == 4:
-                self.unpack = 1
-                self.delete = 1
-            elif DbRow.ReqType == 5:
-                self.unpack = 1
-                self.delete = 1
-                aic_support = True
-            elif DbRow.ReqType == 2:
-                self.unpack = 0
-                self.delete = 1
+            StorageMethodRead_obj = StorageMethodRead()
+            StorageMethodRead_obj.logger = logger
+            StorageMethodRead_obj.AccessQueue_obj = AccessQueue_obj
 
-            self.cmdres,self.errno,self.why = ESSPGM.Check().AIPextract(storageMediumID=DbRow.storageMediumID, 
-                                                                        ObjectIdentifierValue=DbRow.ObjectIdentifierValue,
-                                                                        delete=self.delete,
-                                                                        prefix=None,
-                                                                        target=DbRow.Path,
-                                                                        unpack=self.unpack,
-                                                                        aic_support=aic_support,
-                                                                        )
-            if self.errno:
-                if DbRow.ReqType in (1,3,4,5):
-                    event_info = 'Problem to Generate DIP for ObjectIdentifierValue: %s, ReqUUID: %s, errorcode: %s, errormessage: %s' % (DbRow.ObjectIdentifierValue,DbRow.ReqUUID,str(self.errno),str(self.why))
-                    logger.error(event_info)
-                    ESSPGM.Events().create('1203',DbRow.ReqPurpose,'ESSArch Access',ProcVersion,'1',event_info,2,DbRow.ObjectIdentifierValue)
-                elif DbRow.ReqType == 2:
-                    event_info = 'Problem to quickverify storageMediumID: %s, ReqUUID: %s, errorcode: %s, errormessage: %s' % (DbRow.storageMediumID,DbRow.ReqUUID,str(self.errno),str(self.why))
-                    logger.error(event_info)
-                    ESSPGM.Events().create('2203',DbRow.ReqPurpose,'ESSArch Access',ProcVersion,'1',event_info,2,storageMediumID=DbRow.storageMediumID)
-                DbRow.Status = 100
-                DbRow.save()
-            else:
-                if DbRow.ReqType in (1,3,4):
-                    event_info = 'Success to Generate DIP for ObjectIdentifierValue: %s, ReqUUID: %s, cmdres: %s' % (DbRow.ObjectIdentifierValue,DbRow.ReqUUID,str(self.cmdres))
-                    logger.info(event_info)
-                    ESSPGM.Events().create('1203',DbRow.ReqPurpose,'ESSArch Access',ProcVersion,'0',event_info,2,DbRow.ObjectIdentifierValue)
-                elif DbRow.ReqType == 5:
-                    event_info = 'Success to get AIP to ControlArea for ObjectIdentifierValue: %s, ReqUUID: %s, cmdres: %s' % (DbRow.ObjectIdentifierValue,DbRow.ReqUUID,str(self.cmdres))
-                    logger.info(event_info)
-                    ESSPGM.Events().create('1203',DbRow.ReqPurpose,'ESSArch Access',ProcVersion,'0',event_info,2,DbRow.ObjectIdentifierValue)
-                    # Update IP in ArchiveObject DBtable
-                    ArchiveObject_upd = ArchiveObject.objects.filter(ObjectIdentifierValue = DbRow.ObjectIdentifierValue)[:1].get()
-                    setattr(ArchiveObject_upd, 'StatusActivity', 7)
-                    # Commit DB updates
-                    ArchiveObject_upd.save()
-                elif DbRow.ReqType == 2:
-                    event_info = 'Success to quickverify storageMediumID: %s, ReqUUID: %s, cmdres: %s' % (DbRow.storageMediumID,DbRow.ReqUUID,str(self.cmdres))
-                    logger.info(event_info)
-                    ESSPGM.Events().create('2203',DbRow.ReqPurpose,'ESSArch Access',ProcVersion,'0',event_info,2,storageMediumID=DbRow.storageMediumID)
-                DbRow.Status = 20
-                DbRow.save()
-            db.close_old_connections()
+            if AccessQueue_obj.ReqType == 1:
+                StorageMethodRead_obj.get_object_to_read()
+                StorageMethodRead_obj.add_to_ioqueue()
+                StorageMethodRead_obj.apply_ios_to_read()
+                StorageMethodRead_obj.wait_for_all_reads()
+                StorageMethodRead_obj.ip_unpack()
+                StorageMethodRead_obj.ip_validate()
+            elif AccessQueue_obj.ReqType == 3:
+                StorageMethodRead_obj.get_object_to_read()
+                StorageMethodRead_obj.add_to_ioqueue()
+                StorageMethodRead_obj.apply_ios_to_read()
+                StorageMethodRead_obj.wait_for_all_reads()
+            elif AccessQueue_obj.ReqType in [4,5]:
+                StorageMethodRead_obj.get_object_to_read()
+                StorageMethodRead_obj.add_to_ioqueue()
+                StorageMethodRead_obj.apply_ios_to_read()
+                StorageMethodRead_obj.wait_for_all_reads()
+                StorageMethodRead_obj.ip_unpack()
+                StorageMethodRead_obj.ip_validate()
+                StorageMethodRead_obj.delete_retrieved_ios()
+            elif AccessQueue_obj.ReqType == 2:
+                StorageMethodRead_obj.get_objects_to_verify()
+                StorageMethodRead_obj.add_to_ioqueue()
+                StorageMethodRead_obj.apply_ios_to_read()
+                StorageMethodRead_obj.wait_for_all_reads()
+                StorageMethodRead_obj.delete_retrieved_ios()
+
+        except AccessError as e:
+            exc_type, exc_value, exc_traceback = sys.exc_info()            
+            AccessQueue_obj.refresh_from_db()
+            if AccessQueue_obj.ReqType in (1,3,4,5):
+                event_info = 'Problem to Generate DIP for ObjectIdentifierValue: %s, ReqUUID: %s, error: %s, line: %s' % (AccessQueue_obj.ObjectIdentifierValue,AccessQueue_obj.ReqUUID, e, exc_traceback.tb_lineno)
+                logger.error(event_info)
+                ESSPGM.Events().create('1203',AccessQueue_obj.ReqPurpose,'ESSArch Access',ProcVersion,'1',event_info,2,AccessQueue_obj.ObjectIdentifierValue)
+            elif AccessQueue_obj.ReqType == 2:
+                event_info = 'Problem to quickverify storageMediumID: %s, ReqUUID: %s, error: %s line: %s' % (AccessQueue_obj.storageMediumID,AccessQueue_obj.ReqUUID, e, exc_traceback.tb_lineno)
+                logger.error(event_info)
+                ESSPGM.Events().create('2203',AccessQueue_obj.ReqPurpose,'ESSArch Access',ProcVersion,'1',event_info,2,storageMediumID=AccessQueue_obj.storageMediumID)
+            AccessQueue_obj.Status = 100
+            AccessQueue_obj.save(update_fields=['Status'])
+            #raise e
+        except Exception as e:
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+            msg = 'Unknown error, error: %s trace: %s' % (e, repr(traceback.format_tb(exc_traceback)))            
+            logger.error(msg)
+            AccessQueue_obj.refresh_from_db()
+            msg = 'Unknown error with access ReqUUID: %s, error: %s trace: %s' % (AccessQueue_obj.ReqUUID, e, repr(traceback.format_tb(exc_traceback)))
+            logger.error(msg)
+            AccessQueue_obj.Status = 100
+            AccessQueue_obj.save(update_fields=['Status'])
+            #raise e
         except:
-            logger.error('Unexpected error: %s %s' % (sys.exc_info()[0], sys.exc_info()[1]))
-            print "Unexpected error:", sys.exc_info()[0], sys.exc_info()[1]
-            raise
+            msg = 'Unexpected error: %s %s' % (sys.exc_info()[0], sys.exc_info()[1])
+            logger.error(msg)
+            print msg
+            #raise
+        else:
+            if AccessQueue_obj.ReqType in (1,3,4):
+                event_info = 'Success to Generate DIP for ObjectIdentifierValue: %s, ReqUUID: %s' % (AccessQueue_obj.ObjectIdentifierValue,AccessQueue_obj.ReqUUID)
+                logger.info(event_info)
+                ESSPGM.Events().create('1203',AccessQueue_obj.ReqPurpose,'ESSArch Access',ProcVersion,'0',event_info,2,AccessQueue_obj.ObjectIdentifierValue)
+            elif AccessQueue_obj.ReqType == 5:
+                event_info = 'Success to get AIP to ControlArea for ObjectIdentifierValue: %s, ReqUUID: %s' % (AccessQueue_obj.ObjectIdentifierValue,AccessQueue_obj.ReqUUID)
+                logger.info(event_info)
+                ESSPGM.Events().create('1203',AccessQueue_obj.ReqPurpose,'ESSArch Access',ProcVersion,'0',event_info,2,AccessQueue_obj.ObjectIdentifierValue)
+                # Update IP in ArchiveObject DBtable
+                ArchiveObject_upd = ArchiveObject.objects.get(ObjectIdentifierValue = AccessQueue_obj.ObjectIdentifierValue)
+                setattr(ArchiveObject_upd, 'StatusActivity', 7)
+                # Commit DB updates
+                ArchiveObject_upd.save(update_fields=['StatusActivity'])
+            elif AccessQueue_obj.ReqType == 2:
+                event_info = 'Success to quickverify storageMediumID: %s, ReqUUID: %s' % (AccessQueue_obj.storageMediumID,AccessQueue_obj.ReqUUID)
+                logger.info(event_info)
+                ESSPGM.Events().create('2203',AccessQueue_obj.ReqPurpose,'ESSArch Access',ProcVersion,'0',event_info,2,storageMediumID=AccessQueue_obj.storageMediumID)
+            AccessQueue_obj.Status = 20
+            AccessQueue_obj.save(update_fields=['Status'])      
 
 def GenerateDIPProc(DbRow):
-    return Functions().GenerateDIPProc(DbRow)
+    logger.debug('FuncStart GenerateDIPProc')
+    return Access().ProcessAccessRequest(DbRow)
 
 class WorkingThread:
     "Thread is working in the background"
@@ -128,6 +168,7 @@ class WorkingThread:
         # Start Process pool with 2 process
         self.ReqTags = 2
         self.ProcPool = multiprocessing.Pool(self.ReqTags)
+        jobs = []
         while 1:
             if self.mDieFlag==1: break      # Request for death
             self.mLock.acquire()
@@ -166,9 +207,19 @@ class WorkingThread:
                         AccessQueue_DbRow.Status = 2
                         #model.meta.Session.commit()
                         AccessQueue_DbRow.save()
-                        self.ProcPool.apply_async(GenerateDIPProc, (AccessQueue_DbRow.ReqUUID,))
+                        logger.info('Add ReqUUID: %s to GenerateDIPProc' % AccessQueue_DbRow.ReqUUID)
+                        res = self.ProcPool.apply_async(GenerateDIPProc, (AccessQueue_DbRow.ReqUUID,))
+                        jobs.append(res)
+            for job in jobs:
+                try:
+                    msg = 'Result from GenerateDIPProc: %s' % repr(job.get(timeout=1))
+                except multiprocessing.TimeoutError as e:
+                    msg = 'Timeout wait for result from GenerateDIPProc'
+                logger.debug(msg)
+            if len(self.ProcPool._cache) == 0:
+                jobs = []
             logger.debug('ProcPool_cache: %r',self.ProcPool._cache)
-            db.close_old_connections()
+            connection.close()
             time.sleep(5)
             self.mLock.release()
         time.sleep(10)

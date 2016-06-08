@@ -10,7 +10,7 @@
 
 <div class="results">
 {% if req_list %}
-  <table id="result_list">
+  <table id="result_list" class="table">
     <thead>
       <tr>
                 <th>ReqUUID</th>
@@ -43,4 +43,20 @@
 
 </div>    
    
+{% endblock %}
+
+{% block app-extra-script %}
+<script>
+
+//Reload script
+window.onload = setupRefresh;
+
+function setupRefresh() {
+  setTimeout("refreshPage();", 30000);
+}
+function refreshPage() {
+   window.location = location.href;
+}
+
+</script>
 {% endblock %}
